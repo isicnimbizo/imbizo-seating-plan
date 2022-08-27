@@ -1,0 +1,26 @@
+import pandas as pd
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def load_people(file_name="names.csv"):
+    """
+    load people from names.csv
+    """
+    return pd.read_csv(file_name, sep=";")
+
+
+def load_table_layout(file_name="table-layout.csv"):
+    """
+    Load table layout from csv
+    """
+    return pd.read_csv(file_name, sep=";").dropna()
+
+
+def load_past_groupings(file_name="seating-plan.csv"):
+    """
+    Load seating plan from csv
+    """
+    return pd.read_csv(file_name, sep=";").dropna()
