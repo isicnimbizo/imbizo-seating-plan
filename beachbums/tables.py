@@ -10,6 +10,7 @@ from .persons import Person
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Table:
     """
@@ -17,35 +18,44 @@ class Table:
     """
 
     name: str
-    size: int
+    capacity: int
     people: List[Person] = field(default_factory=lambda: [])
-    actual_size: int = 0
+
+    @property
+    def seated(self):
+        return len(self.people)
+
+    @property
+    def has_space(self):
+        return self.seated < self.capacity
+
+    @property
+    def is_full(self):
+        return not self.has_space
 
     def add_person(self, person: Person):
         """
         Add a person to the table
         """
-        if self.actual_size >= self.size:
+        if self.seated >= self.capacity:
             raise ValueError(f"Table {self.name} is full")
         if isinstance(person, str):
             logger.warning(f"{person} is not a Person object")
         self.people.append(person)
-        self.actual_size += 1
-        return self.actual_size
+        return self.seated
 
     def remove_person(self, person: Person):
         """
         Remove a person from the table
         """
         self.people.remove(person)
-        self.actual_size -= 1
-        return self.actual_size
+        return self.seated
 
     def __repr__(self):
-        return f"{self.name} ({self.actual_size}/{self.size})"
+        return f"{self.name}({self.seated}/{self.capacity}) = {[p.name for p in self.people]}"
 
     def __str__(self):
-        return f"{self.name} = {[p.name for p in self.people]}"
+        return f"{self.name}({self.seated}/{self.capacity}) = {[p.name for p in self.people]}"
 
 
 def define_table_layout(layout: pd.DataFrame):

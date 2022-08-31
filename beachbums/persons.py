@@ -2,9 +2,11 @@ import copy
 import logging
 from typing import Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
 
 def create_person_objects(
     people: pd.DataFrame,
@@ -18,6 +20,24 @@ def create_person_objects(
         person_record_dict[name_col]: Person(person_record_dict, name_col=name_col)
         for person_record_dict in people.to_dict("records")
     }
+
+
+def create_adjacency_matrix(persons: Dict[str, "Person"]):
+    """
+    Create adjacency matrix for persons
+    """
+    logger.info("Creating adjacency matrix")
+    # create pandas dataframe with person names as index and columns as person names
+    person_names = [person.name for person in persons.values()]
+    adjacency_matrix = pd.DataFrame(
+        index=person_names,
+        columns=person_names,
+        data=np.zeros((len(persons), len(persons))),
+    )
+    for p_name, person in persons.items():
+        for other_person, count in person.pairs.items():
+            adjacency_matrix.loc[person.name, other_person.name] = count
+    return adjacency_matrix
 
 
 class Person:
@@ -35,12 +55,10 @@ class Person:
             add_pair(other_person, reciprocate=True): add a count of 1 to the pair count for this person and the other person
             add_persons(other_persons): add a count of 1 to the pair count for this person and the other persons
             get_pairs(): return the list of people with whom this person has sat
-            get_pair_count(): return the total number of times this person has sat with someone
+            get_total_pair_count(): return the total number of times this person has sat with someone
             get_pair_count_for_person(other_person): return the number of times this person has sat with the other person
             get_pair_count_for_people(other_people): return the number of times this person has sat with all of the other people
             get_pair_count_for_people_except(other_people): return the number of times this person has sat with all of the other people except the other people
-            get_pair_count_for_people_except_person(other_person): return the number of times this person has sat with all of the other people except the other person
-            get_pair_count_for_people_except_people(other_people): return the number of times this person has sat with all of the other people except the other people
     """
 
     def __init__(
@@ -120,6 +138,19 @@ class Person:
         if reciprocate:
             # prevent infinite recursion
             other_person.add_pair(self, reciprocate=False)
+
+    def add_option(self, other_person: "Person"):
+        """Add the other person as an option for pairs (default pair count of 0)
+        """
+        if self == other_person:
+            return
+        self.pairs.setdefault(other_person, 0)
+        
+
+    @property
+    def pretty_pairs(self):
+        """return pairs as strings instead of Person objects"""
+        return {other_person.name: count for other_person, count in self.pairs.items()}
 
     def get_pairs(self):
         return self.pairs.keys()

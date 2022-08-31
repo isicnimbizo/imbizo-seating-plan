@@ -5,13 +5,12 @@ import argparse
 import logging
 from pathlib import Path
 import sys
-from typing import Dict
 
-import numpy as np
-import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from beachbums.data import load_people, load_past_groupings, load_table_layout
-from beachbums.persons import Person, create_person_objects
+from beachbums.persons import create_adjacency_matrix, create_person_objects
 from beachbums.seating_plan import create_seating_plan, process_previous_pairings
 from beachbums.tables import create_random_tables, define_table_layout
 
@@ -28,9 +27,13 @@ if __name__ == "__main__":
         default="seating-plan-*.csv",
         nargs="*",
     )
+    # add report flag
+    parser.add_argument(
+        "-r", "--report", help="generate a report? (flag)", action="store_true"
+    )
     # output file
     parser.add_argument(
-        "-o", "--output", help="path to output seating plan file", default=None
+        "-o", "--output", help="path to output seating plan file", default=True
     )
     # add group for table options
     table_options = parser.add_argument_group(title="table options")
@@ -41,7 +44,7 @@ if __name__ == "__main__":
         default="table-layout.csv",
     )
     table_options.add_argument(
-        "-r", "--random", help="create random seating plan", action="store_true"
+        "--random", help="create random seating plan", action="store_true"
     )
     table_options.add_argument(
         "-c", "--num-tables", help="number of tables", type=int, default=6
@@ -164,7 +167,18 @@ if __name__ == "__main__":
     persons = create_person_objects(people)
 
     process_previous_pairings(past_groupings, persons)
-    save = args.output or args.output is None
+
+    if args.report:
+        # create adjacency matrix of past pairs using person objects' .pairs dict
+        adjacency_matrix = create_adjacency_matrix(persons)
+        adjacency_matrix.fillna(0, inplace=True)
+        adjacency_matrix.to_csv("report.csv")
+        with sns.plotting_context("paper", font_scale=0.5):
+            fig, ax = plt.subplots(figsize=(6,6), dpi=200)
+            sns.heatmap(adjacency_matrix, ax=ax, square=True)
+            fig.savefig("report.png")
+    
+    save = args.output
     logger.info(f"{save=}")
     seating_plan = create_seating_plan(people, persons, tables, save=args.output or args.output is not None)
     print(seating_plan)

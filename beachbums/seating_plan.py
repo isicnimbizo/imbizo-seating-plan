@@ -2,7 +2,7 @@ import datetime
 import logging
 from functools import partial
 from itertools import product
-from typing import Dict, List
+from typing import Callable, Dict, List, Union
 
 import numpy as np
 import pandas as pd
@@ -77,22 +77,24 @@ def create_seating_plan(
     faculty_persons = [persons[name] for name in random_faculty]
 
     # first, sort tables by size (using value of sub-dict key "size") with smallest tables first
-    sorted_tables = dict(sorted(tables.items(), key=lambda x: x[1].size))
+    sorted_tables = dict(sorted(tables.items(), key=lambda x: x[1].capacity))
     # then, combine people with TAs first, then FACULTY, then STUDENTS
     sorted_people = random_tas + random_faculty + random_students
 
     # ensure everyone is an option
     for ta, other_person in product(ta_persons, student_persons + faculty_persons):
-        ta.pairs.setdefault(other_person, 0)
+        ta.add_option(other_person)
 
     # keep track of where a person is sitting
-    people_dict = {sorted_people[i]: -1 for i in range(len(sorted_people))}
+    people_dict: Dict[str, Union[int, Table]] = {
+        sorted_people[i]: -1 for i in range(len(sorted_people))
+    }
 
     # create a partial function to add a person to a table, taking in the people dict and table dict
-    add_person_to_table = partial(add_person_to_table_generic, people_dict, tables)
+    add_person_to_table_func = add_person_to_table_factory(people_dict, tables)
 
     # count size of tables
-    total_seats = sum([table.size for table in sorted_tables.values()])
+    total_seats = sum([table.capacity for table in sorted_tables.values()])
     if total_seats < len(sorted_people):
         raise ValueError(
             f"Not enough seats for all people! {total_seats} < {len(sorted_people)}"
@@ -107,15 +109,15 @@ def create_seating_plan(
     # assign tas to table and choose people they haven't sat with yet
     for (table_name, table), ta in zip(sorted_tables.items(), ta_persons):
         # add TA
-        added = add_person_to_table(ta, table_name)
+        added = add_person_to_table_func(ta, table_name)
         if not added:
             raise ValueError(f"Could not add {ta} to {table_name}")
         # get previous pairs
         options, counts = ta.get_pair_count_for_people_except(
             excluded_persons + faculty_persons + ta_persons
         )
-        counts = np.array(counts)
-        p = 1 - (counts / counts.sum())
+        adjusted_counts = np.array(counts) + 1 # add 1 to denominator so that inverse is 1 not 0
+        p = 1 / adjusted_counts**4 # power of 4 to make it even less likely to sit with the same person
         # assign a probability of 0 to people already at tables
         for i, option in enumerate(options):
             if people_dict[option.name] != -1:
@@ -126,8 +128,8 @@ def create_seating_plan(
         # people to seat.
         # if there are extra seats, don't fill up the tables initially. This would mean the last table could be empty.
         size = (
-            table.size
-            - table.actual_size
+            table.capacity
+            - table.seated
             - (extra_seats + len(faculty_persons) + len(extra_tas))
             // len(sorted_tables)
         )
@@ -143,7 +145,7 @@ def create_seating_plan(
         )
         # add them to the table
         for choice in choices:
-            added = add_person_to_table(choice, table_name)
+            added = add_person_to_table_func(choice, table_name)
             if not added:
                 raise ValueError(f"Could not add {choice} to {table_name}")
 
@@ -157,7 +159,7 @@ def create_seating_plan(
     for person in sorted_persons:
         # assign starting point for checking in the while loop
         table_start = table_name
-        while not add_person_to_table(person, table_name):
+        while not add_person_to_table_func(person, table_name):
             table_name = table_names[
                 (table_names.index(table_name) + 1) % len(table_names)
             ]
@@ -210,19 +212,23 @@ def create_seating_plan(
     return seating_plan
 
 
-def add_person_to_table_generic(
-    people_dict, table_dict: Dict[str, Table], person: Person, table_name: str
-) -> None:
+def add_person_to_table_factory(
+    people_dict, table_dict: Dict[str, Table]
+) -> Callable[[Person, str], bool]:
+    return partial(_add_person_to_table_generic, people_dict, table_dict)
+
+
+def _add_person_to_table_generic(
+    people_dict: Dict[str, Union[int, Table]],
+    table_dict: Dict[str, Table],
+    person: Person,
+    table_name: str,
+) -> bool:
     """
-    Add a person to a table
+    Add a person to a table.
     """
-    if (
-        table_dict[table_name].actual_size < table_dict[table_name].size
-        and people_dict[person.name] == -1
-    ):
+    if table_dict[table_name].has_space and people_dict[person.name] == -1:
         table_dict[table_name].add_person(person)
-        # table_dict[table_name]["people"].append(person)
-        # table_dict[table_name]["actual_size"] = len(table_dict[table_name]["people"])
         people_dict[person.name] = table_dict[table_name]
         return True
     return False
