@@ -2,7 +2,8 @@ import datetime
 import logging
 from functools import partial
 from itertools import product
-from typing import Callable, Dict, List, Union
+from pathlib import Path
+from typing import Callable, Union
 
 import numpy as np
 import pandas as pd
@@ -15,20 +16,20 @@ rng = np.random.default_rng()
 
 
 def process_previous_pairings(
-    seating_plans: List[pd.DataFrame], persons: Dict[str, Person]
+    seating_plans: list[pd.DataFrame], persons: dict[str, Person]
 ) -> None:
     """
     Add counts of number of times people have sat together
 
     Args:
-        seating_plans: List of seating plans (loaded from seating-plan files)
-        persons: Dictionary of persons (created from names.csv)
+        seating_plans: list of seating plans (loaded from seating-plan files)
+        persons: dictionary of persons (created from names.csv)
     """
     logger.info("Processing previous pairings")
     for seating_plan in seating_plans:
         for table_name, table_frame in seating_plan.groupby("Table"):
             # list of everyone seated at this table in Person object format
-            table_persons_list: List[Person] = []
+            table_persons_list: list[Person] = []
             for name in table_frame["Name"]:
                 if name not in persons:
                     logger.warning(
@@ -46,13 +47,14 @@ def process_previous_pairings(
 
 def create_seating_plan(
     people: pd.DataFrame,
-    persons: Dict[str, Person],
-    tables: Dict[str, Table],
+    persons: dict[str, Person],
+    tables: dict[str, Table],
     name_col="NAME",
     save=True,
 ):
     """
-    randomize seating based on TAs being at each table and evenly seat people at each table
+    randomize seating based on TAs being at each table and evenly seat people at
+    each table
 
     :param people: dataframe containing GROUP (TA, STUDENT, or FACULTY) and people's names
     :param tables: dict of dict with table name: {size, people}
@@ -76,7 +78,8 @@ def create_seating_plan(
     random_faculty = faculty_df.sample(len(faculty_df)).tolist()
     faculty_persons = [persons[name] for name in random_faculty]
 
-    # first, sort tables by size (using value of sub-dict key "size") with smallest tables first
+    # first, sort tables by size (using value of sub-dict key "size") with smallest
+    # tables first
     sorted_tables = dict(sorted(tables.items(), key=lambda x: x[1].capacity))
     # then, combine people with TAs first, then FACULTY, then STUDENTS
     sorted_people = random_tas + random_faculty + random_students
@@ -86,11 +89,12 @@ def create_seating_plan(
         ta.add_option(other_person)
 
     # keep track of where a person is sitting
-    people_dict: Dict[str, Union[int, Table]] = {
+    people_dict: dict[str, Union[int, Table]] = {
         sorted_people[i]: -1 for i in range(len(sorted_people))
     }
 
-    # create a partial function to add a person to a table, taking in the people dict and table dict
+    # create a partial function to add a person to a table, taking in the people dict and
+    # table dict
     add_person_to_table_func = add_person_to_table_factory(people_dict, tables)
 
     # count size of tables
@@ -100,12 +104,14 @@ def create_seating_plan(
             f"Not enough seats for all people! {total_seats} < {len(sorted_people)}"
         )
     extra_seats = total_seats - len(sorted_people)
-    if len(ta_persons) > len(sorted_tables):
-        extra_tas = ta_persons[len(sorted_tables) :]
-        ta_persons = ta_persons[: len(sorted_tables)]
+    extra_tas = []
+    if len(ta_persons) > (num_sorted_tables := len(sorted_tables)):
+        extra_tas = ta_persons[num_sorted_tables:]
+        ta_persons = ta_persons[:num_sorted_tables]
+
     ### SEAT PEOPLE ###
     # first, seat TAs
-
+    all_excluded = set(excluded_persons + faculty_persons + ta_persons)
     # assign tas to table and choose people they haven't sat with yet
     for (table_name, table), ta in zip(sorted_tables.items(), ta_persons):
         # add TA
@@ -113,11 +119,11 @@ def create_seating_plan(
         if not added:
             raise ValueError(f"Could not add {ta} to {table_name}")
         # get previous pairs
-        options, counts = ta.get_pair_count_for_people_except(
-            excluded_persons + faculty_persons + ta_persons
-        )
-        adjusted_counts = np.array(counts) + 1 # add 1 to denominator so that inverse is 1 not 0
-        p = 1 / adjusted_counts**4 # power of 4 to make it even less likely to sit with the same person
+        options, counts = ta.get_pair_count_for_everyone_except(all_excluded)
+        # add 1 to denominator so that inverse is 1 not 0
+        adjusted_counts = np.array(counts) + 1
+        # power to make it even less likely to sit with the same person
+        p = 1 / adjusted_counts**4
         # assign a probability of 0 to people already at tables
         for i, option in enumerate(options):
             if people_dict[option.name] != -1:
@@ -126,12 +132,17 @@ def create_seating_plan(
         p = p / p.sum()
 
         # people to seat.
-        # if there are extra seats, don't fill up the tables initially. This would mean the last table could be empty.
+        # if there are extra seats, don't fill up the tables initially. This would mean
+        # the last table could be empty.
         size = (
             table.capacity
             - table.seated
-            - (extra_seats + len(faculty_persons) + len(extra_tas))
-            // len(sorted_tables)
+            - int(
+                np.ceil(
+                    (extra_seats + len(faculty_persons) + len(extra_tas))
+                    / len(sorted_tables),
+                )
+            )
         )
         # make sure
         if size > np.sum(p > 0):
@@ -183,14 +194,25 @@ def create_seating_plan(
         table_name for table_name, count in faculty_table_count.items() if count == 0
     ]
     if len(multi_faculty_table_count) > 0 and len(zero_faculty_table_count) > 0:
-        raise ValueError(
-            f"Some tables have more than one faculty and some tables have no faculty: {multi_faculty_table_count} and {zero_faculty_table_count}"
+        # log the tables with more than 1 faculty
+        err_msg = (
+            f"Some tables have more than one faculty and some tables have no faculty."
+            f"\nMulti: {multi_faculty_table_count} and Zero:{zero_faculty_table_count}"
         )
+        logger.error(err_msg)
+        for table_name, table in sorted_tables.items():
+            if table_name in multi_faculty_table_count:
+                logger.error(f"MULTI -> {table_name}: {table.people}")
+            elif table_name in zero_faculty_table_count:
+                logger.error(f"ZERO  -> {table_name}: {table.people}")
+            else:
+                logger.warning(f" OK -> {table_name}: {table.people}")
+        raise ValueError(err_msg)
 
     # convert to pure string; use sub-dict for easier creation of dataframe
     tables_dict = {k: {"people": [p.name for p in t.people]} for k, t in tables.items()}
 
-    # create a dataframe from the people dict
+    # create a dataframe from the table dict
     seating_plan = pd.DataFrame.from_dict(tables_dict, orient="index").explode("people")
     seating_plan.index.name = "Table"
     seating_plan.reset_index(inplace=True)
@@ -200,6 +222,10 @@ def create_seating_plan(
             file_name = (
                 f"seating-plan-{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
             )
+            # check if file exists
+            if Path(file_name).exists():
+                # file name that includes time
+                file_name = f"seating-plan-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
         else:
             file_name = save
         # export to seating-plan-<date>.csv
@@ -213,14 +239,14 @@ def create_seating_plan(
 
 
 def add_person_to_table_factory(
-    people_dict, table_dict: Dict[str, Table]
+    people_dict, table_dict: dict[str, Table]
 ) -> Callable[[Person, str], bool]:
     return partial(_add_person_to_table_generic, people_dict, table_dict)
 
 
 def _add_person_to_table_generic(
-    people_dict: Dict[str, Union[int, Table]],
-    table_dict: Dict[str, Table],
+    people_dict: dict[str, Union[int, Table]],
+    table_dict: dict[str, Table],
     person: Person,
     table_name: str,
 ) -> bool:

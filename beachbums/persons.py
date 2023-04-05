@@ -1,28 +1,40 @@
 import copy
 import logging
-from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+default_background_cols = {
+    "Math",
+    "Physics",
+    "Stats",
+    "Chem",
+    "Bio",
+    "Comp Sci",
+    "Neuro",
+}
+
 
 def create_person_objects(
     people: pd.DataFrame,
     name_col="NAME",
-) -> Dict[str, "Person"]:
+    background_cols=default_background_cols,
+) -> dict[str, "Person"]:
     """
     Create person objects from people dataframe
     """
     logger.info("Creating person objects")
     return {
-        person_record_dict[name_col]: Person(person_record_dict, name_col=name_col)
+        person_record_dict[name_col]: Person(
+            person_record_dict, name_col=name_col, background_cols=background_cols
+        )
         for person_record_dict in people.to_dict("records")
     }
 
 
-def create_adjacency_matrix(persons: Dict[str, "Person"]):
+def create_adjacency_matrix(persons: dict[str, "Person"]):
     """
     Create adjacency matrix for persons
     """
@@ -47,7 +59,7 @@ class Person:
         Attributes:
             name (str): the person's name
             group (str): the person's group (TA, STUDENT, or FACULTY)
-            background (str): the person's background (optional)
+            backgrounds (dict): the person's backgrounds (optional)
             exclude (bool): whether the person is excluded from the beachbums
             pairs (dict): a dict of dicts where the key is the person's name and the value is a dict of the number of times they've sat with someone
 
@@ -66,7 +78,7 @@ class Person:
         record: dict,
         name_col="NAME",
         group_col="GROUP",
-        background_col="BACKGROUND",
+        background_cols=default_background_cols,
     ):
         """
         Initialize a Person object from a record dict.
@@ -75,30 +87,53 @@ class Person:
         {
             "NAME": "John",
             "GROUP": "STUDENT",
-            "BACKGROUND": "Maths",
+            "Maths": 10,
+            "Physics": 9,
+            "Neuroscience": 5,
+            "EXCLUDE": False
         }
 
         Args:
             record (dict): the record dict from the people dataframe
             name_col (str): the name column name
             group_col (str): the group column name
-            background_col (str): the background column name
+            background_cols (Optional[set[str]]): the background column names
 
         """
         record = copy.deepcopy(record)
         self.name = record.pop(name_col)
         self.group = record.pop(group_col, None)
-        self.background = record.pop(background_col, None)
+        # add background values if they exist (non-nan when converted to float)
+        self.backgrounds = {
+            col: value
+            for col in background_cols
+            if col in record and not np.isnan(value := float(record.pop(col)))
+        }
         self.exclude = record.pop("EXCLUDE", False)
         self._unique_name = f"{self.name}_{hash(self.name)}"
         # leave the rest of the record dict as is
         self.props = record
 
         # initialize the pair count dict
-        self.pairs: Dict[Person, int] = {}
+        self.pairs: dict[Person, int] = {}
 
-    def __repr__(self):
-        return f"{self.name}"
+    def __repr__(self) -> str:
+        return (
+            "Person({"
+            + ", ".join(
+                [
+                    f"'{key}': {value}"
+                    for key, value in {
+                        "NAME": self.name,
+                        "GROUP": self.group,
+                        "EXCLUDE": self.exclude,
+                        **self.backgrounds,
+                        **self.props,
+                    }.items()
+                ]
+            )
+            + "})"
+        )
 
     def __str__(self):
         return f"{self.name}"
@@ -106,14 +141,20 @@ class Person:
     def __eq__(self, other):
         return self._unique_name == other._unique_name
 
-    def __hash__(self):
-        return hash(self.name)
+    def __hash__(self) -> int:
+        return (
+            hash(self.name)
+            + hash(self.group)
+            + hash(str(self.backgrounds))
+            + hash(self.exclude)
+            + hash(str(self.props))
+        )
 
-    def add_persons(self, other_persons: List["Person"]):
+    def add_persons(self, other_persons: list["Person"]):
         """Add a count of 1 to the pair count for this person and the other persons
 
         Args:
-            other_persons (List[Person]): the other persons with which to pair
+            other_persons (list[Person]): the other persons with which to pair
 
         """
         for other_person in other_persons:
@@ -140,12 +181,10 @@ class Person:
             other_person.add_pair(self, reciprocate=False)
 
     def add_option(self, other_person: "Person"):
-        """Add the other person as an option for pairs (default pair count of 0)
-        """
+        """Add the other person as an option for pairs (default pair count of 0)"""
         if self == other_person:
             return
         self.pairs.setdefault(other_person, 0)
-        
 
     @property
     def pretty_pairs(self):
@@ -161,21 +200,21 @@ class Person:
     def get_pair_count_for_person(self, other_person):
         return self.pairs[other_person] if other_person in self.pairs else 0
 
-    def get_pair_count_for_people(self, other_people):
+    def get_pair_count_for_people(self, other_people: list["Person"]):
         pairs = {
             other_person: self.get_pair_count_for_person(other_person)
             for other_person in other_people
         }
-        return zip(*pairs.items())
+        return list(pairs.keys()), list(pairs.values())
 
-    def get_pair_count_for_people_except(
-        self, other_people: List["Person"]
-    ) -> Tuple[List["Person"], List[int]]:
-        if isinstance(other_people, Person):
-            other_people = [other_people]
+    def get_pair_count_for_everyone_except(
+        self, except_other_people: set["Person"] = set()
+    ) -> tuple[list["Person"], list[int]]:
+        if isinstance(except_other_people, Person):
+            except_other_people = set(except_other_people)
         pairs = {
             other_person: self.get_pair_count_for_person(other_person)
             for other_person in self.get_pairs()
-            if other_person not in other_people
+            if other_person not in except_other_people
         }
-        return zip(*pairs.items())
+        return list(pairs.keys()), list(pairs.values())

@@ -1,7 +1,6 @@
 import logging
 
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -19,7 +18,7 @@ class Table:
 
     name: str
     capacity: int
-    people: List[Person] = field(default_factory=lambda: [])
+    people: list[Person] = field(default_factory=lambda: [])
 
     @property
     def seated(self):
@@ -58,7 +57,7 @@ class Table:
         return f"{self.name}({self.seated}/{self.capacity}) = {[p.name for p in self.people]}"
 
 
-def define_table_layout(layout: pd.DataFrame):
+def define_table_layout(layout: pd.DataFrame) -> dict[str, Table]:
     """
     Define the table layout
     """
@@ -80,7 +79,7 @@ def define_table_layout(layout: pd.DataFrame):
 
 def create_random_tables(
     num_tables=6, min_total_size=40, min_max_variation=2
-) -> Dict[str, dict]:
+) -> dict[str, Table]:
     """
     Create a dict of dicts of random tables
     """

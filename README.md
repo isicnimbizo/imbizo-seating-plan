@@ -10,4 +10,12 @@ Open the console
 python -m beachbums
 ```
 
-## Installation
+See the help
+
+```bash
+python -m beachbums --help
+```
+
+## TODO
+
+- [ ] Implement preferred seating

@@ -1,3 +1,4 @@
+from pathlib import Path
 import pandas as pd
 
 import logging
@@ -19,7 +20,7 @@ def load_table_layout(file_name="table-layout.csv"):
     return pd.read_csv(file_name, sep=";").dropna()
 
 
-def load_past_groupings(file_name="seating-plan.csv"):
+def load_past_groupings(file_name: str | Path = "seating-plan.csv"):
     """
     Load seating plan from csv
     """

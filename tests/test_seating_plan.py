@@ -2,7 +2,6 @@
 """
 import logging
 import pytest
-from typing import Dict
 
 import pandas as pd
 

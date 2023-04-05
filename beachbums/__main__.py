@@ -5,12 +5,18 @@ import argparse
 import logging
 from pathlib import Path
 import sys
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from beachbums.data import load_people, load_past_groupings, load_table_layout
-from beachbums.persons import create_adjacency_matrix, create_person_objects
+from beachbums.group_plan import create_groups_based_on_background
+from beachbums.persons import (
+    create_adjacency_matrix,
+    create_person_objects,
+    default_background_cols,
+)
 from beachbums.seating_plan import create_seating_plan, process_previous_pairings
 from beachbums.tables import create_random_tables, define_table_layout
 
@@ -22,8 +28,8 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--names", help="path to names.csv", default="names.csv")
     parser.add_argument(
         "-p",
-        "--past-pairs",
-        help="path to past-pairs.csv or past-pairs-*.csv files",
+        "--past-groups",
+        help="path to past-pairs-*.csv or seating-plan-*.csv files",
         default="seating-plan-*.csv",
         nargs="*",
     )
@@ -47,19 +53,21 @@ if __name__ == "__main__":
         "--random", help="create random seating plan", action="store_true"
     )
     table_options.add_argument(
-        "-c", "--num-tables", help="number of tables", type=int, default=6
+        "-c",
+        "--num-tables",
+        help="number of tables (for random generation)",
+        type=int,
+        default=6,
     )
     table_options.add_argument(
-        "-ms",
         "--min-size",
-        help="minimum number of people to seat",
+        help="minimum number of people to seat (for random generation)",
         type=int,
         default=40,
     )
     table_options.add_argument(
-        "-var",
-        "--variation",
-        help="minimum variation in size of tables",
+        "--var-size",
+        help="minimum variation in size of tables (for random generation)",
         type=int,
         default=2,
     )
@@ -68,18 +76,23 @@ if __name__ == "__main__":
         title="grouping of students based on background instead of at a table"
     )
     background_options.add_argument(
-        "-b", "--background", help="which background in names to group on", default=None
+        "--background",
+        help="which background in names to group on, e.g. Math",
+        default=None,
+        choices=sorted(default_background_cols),
     )
     # add argument for sorting of backgrounds or reverse mixing
     background_options.add_argument(
-        "-m",
         "--match",
         help=(
-            "match people based on inverse background skill. "
-            "People with high skill on the background are likely to be paired with low skill. "
+            "match people based on inverse background skill. (default: True) "
+            "People with high skill on the background are likely to be "
+            "paired with low skill. "
             "False is similar skill."
         ),
+        choices=["True", "False"],
         default=True,
+        type=bool,
     )
 
     background_options.add_argument(
@@ -91,7 +104,7 @@ if __name__ == "__main__":
     )
 
     # add verbosity argument group
-    verbosity_options = parser.add_argument_group(title="table options")
+    verbosity_options = parser.add_argument_group(title="verbosity options")
     verbosity_options.add_argument(
         "-v", "--verbose", help="increase output verbosity", action="store_true"
     )
@@ -107,19 +120,22 @@ if __name__ == "__main__":
         log_level = logging.DEBUG
     # set colorama logging format
     import colorama
+
     colorama.init()
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    logger.info(f"log level: {log_level}")
+    for ignore_mods in ["matplotlib", "seaborn"]:
+        logging.getLogger(ignore_mods).setLevel(logging.WARNING)
+    logger.info(f"log level: {logging.getLevelName(log_level)}")
 
     if args.random:
         logger.info("creating random seating plan")
         tables = create_random_tables(
             num_tables=args.num_tables,
             min_total_size=args.min_size,
-            min_max_variation=args.min_variation,
+            min_max_variation=args.var_size,
         )
 
     args = parser.parse_args()
@@ -128,13 +144,13 @@ if __name__ == "__main__":
         tables = create_random_tables(
             num_tables=args.num_tables,
             min_total_size=args.min_size,
-            min_max_variation=args.min_variation,
+            min_max_variation=args.var_size,
         )
     else:
         try:
             layout = load_table_layout(args.table_layout)
             tables = define_table_layout(layout)
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             logger.error(f"file not found: {args.table_layout}")
             print("-" * 80)
             parser.print_help()
@@ -142,21 +158,29 @@ if __name__ == "__main__":
             logger.error(f"file not found: {args.table_layout}")
             sys.exit(1)
 
-    seating_plan_files = Path(".").glob("seating-plan-*.csv")
-    if not seating_plan_files:
-        logger.error(f"file not found: seating-plan-<DATE>.csv")
+    past_groups_search_str = args.past_groups
+    if args.background and "seating" in past_groups_search_str:
+        logger.warning(
+            "background option not compatible with seating plan files, "
+            "setting --past-pairs to past-pairs-*.csv"
+        )
+        past_groups_search_str = "past-pairs-*.csv"
+
+    past_groupings_files = Path(".").glob(past_groups_search_str)
+    if not past_groupings_files:
+        logger.error(f"file not found: {past_groups_search_str}")
         print("-" * 80)
         parser.print_help()
         print("\n" + "-" * 80)
-        logger.error(f"file not found: seating-plan-<DATE>.csv")
+        logger.error(f"file not found: {past_groups_search_str}")
         sys.exit(1)
 
-    logger.info("loading previous seating plan or pairs")
-    past_groupings = [load_past_groupings(fname) for fname in seating_plan_files]
+    logger.info("loading previous groups")
+    past_groupings = [load_past_groupings(fname) for fname in past_groupings_files]
 
     try:
         people = load_people(args.names)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         logger.error(f"file not found: {args.names}")
         print("-" * 80)
         parser.print_help()
@@ -166,6 +190,9 @@ if __name__ == "__main__":
 
     persons = create_person_objects(people)
 
+    # process previous groupings to update person objects
+    # each person object has a .pairs dict that stores the number of times
+    # they have been paired with each other person
     process_previous_pairings(past_groupings, persons)
 
     if args.report:
@@ -173,12 +200,23 @@ if __name__ == "__main__":
         adjacency_matrix = create_adjacency_matrix(persons)
         adjacency_matrix.fillna(0, inplace=True)
         adjacency_matrix.to_csv("report.csv")
-        with sns.plotting_context("paper", font_scale=0.5):
-            fig, ax = plt.subplots(figsize=(6,6), dpi=200)
+        with sns.plotting_context("paper", font_scale=0.5):  # type: ignore
+            fig, ax = plt.subplots(figsize=(6, 6), dpi=200)
             sns.heatmap(adjacency_matrix, ax=ax, square=True)
             fig.savefig("report.png")
-    
-    save = args.output
-    logger.info(f"{save=}")
-    seating_plan = create_seating_plan(people, persons, tables, save=args.output or args.output is not None)
-    print(seating_plan)
+    else:
+        save = args.output
+        logger.info(f"{save=}")
+        if args.background:
+            seating_plan = create_groups_based_on_background(
+                persons,
+                args.background,
+                args.group_size,
+                match=args.match,
+                save=save,
+            )
+        else:
+            seating_plan = create_seating_plan(
+                people, persons, tables, save=args.output or args.output is not None
+            )
+        print(seating_plan)
