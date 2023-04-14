@@ -10,18 +10,18 @@
       "request": "launch",
       "module": "beachbums",
       "justMyCode": true,
-      "args": ["--report", "-vv"],
+      "args": ["-vv", "-o", ""],
       "env": {
         "PYTHONPATH": "${workspaceRoot}"
       }
     },
     {
-      "name": "Python: Group Plan (Math)",
+      "name": "Python: Group Plan (Programming)",
       "type": "python",
       "request": "launch",
       "module": "beachbums",
       "justMyCode": true,
-      "args": ["--background", "Math", "-vv"],
+      "args": ["--background", "Programming", "-vv", "-o", ""],
       "env": {
         "PYTHONPATH": "${workspaceRoot}"
       }

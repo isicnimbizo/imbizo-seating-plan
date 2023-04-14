@@ -24,4 +24,4 @@ def load_past_groupings(file_name: str | Path = "seating-plan.csv"):
     """
     Load seating plan from csv
     """
-    return pd.read_csv(file_name, sep=";").dropna()
+    return pd.read_csv(file_name, sep=";").dropna(how="all")

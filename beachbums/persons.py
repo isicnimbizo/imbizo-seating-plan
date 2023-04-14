@@ -12,7 +12,7 @@ default_background_cols = {
     "Stats",
     "Chem",
     "Bio",
-    "Comp Sci",
+    "Programming",
     "Neuro",
 }
 
@@ -109,6 +109,7 @@ class Person:
             for col in background_cols
             if col in record and not np.isnan(value := float(record.pop(col)))
         }
+        self.preferred = record.pop("PREFERRED", None)
         self.exclude = record.pop("EXCLUDE", False)
         self._unique_name = f"{self.name}_{hash(self.name)}"
         # leave the rest of the record dict as is
@@ -118,25 +119,10 @@ class Person:
         self.pairs: dict[Person, int] = {}
 
     def __repr__(self) -> str:
-        return (
-            "Person({"
-            + ", ".join(
-                [
-                    f"'{key}': {value}"
-                    for key, value in {
-                        "NAME": self.name,
-                        "GROUP": self.group,
-                        "EXCLUDE": self.exclude,
-                        **self.backgrounds,
-                        **self.props,
-                    }.items()
-                ]
-            )
-            + "})"
-        )
+        return self.name
 
     def __str__(self):
-        return f"{self.name}"
+        return self.name
 
     def __eq__(self, other):
         return self._unique_name == other._unique_name
@@ -149,6 +135,18 @@ class Person:
             + hash(self.exclude)
             + hash(str(self.props))
         )
+
+    @property
+    def is_faculty(self) -> bool:
+        return self.group == "FACULTY"
+
+    @property
+    def is_ta(self) -> bool:
+        return self.group == "TA"
+
+    @property
+    def is_student(self) -> bool:
+        return self.group == "STUDENT"
 
     def add_persons(self, other_persons: list["Person"]):
         """Add a count of 1 to the pair count for this person and the other persons
@@ -197,10 +195,10 @@ class Person:
     def get_total_pair_count(self):
         return sum(self.pairs.values())
 
-    def get_pair_count_for_person(self, other_person):
+    def get_pair_count_for_person(self, other_person: "Person"):
         return self.pairs[other_person] if other_person in self.pairs else 0
 
-    def get_pair_count_for_people(self, other_people: list["Person"]):
+    def get_pair_count_for_people(self, other_people: set["Person"] | list["Person"]):
         pairs = {
             other_person: self.get_pair_count_for_person(other_person)
             for other_person in other_people
@@ -208,7 +206,7 @@ class Person:
         return list(pairs.keys()), list(pairs.values())
 
     def get_pair_count_for_everyone_except(
-        self, except_other_people: set["Person"] = set()
+        self, except_other_people: set["Person"] | list["Person"] = set()
     ) -> tuple[list["Person"], list[int]]:
         if isinstance(except_other_people, Person):
             except_other_people = set(except_other_people)

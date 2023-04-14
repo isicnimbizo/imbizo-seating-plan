@@ -58,81 +58,101 @@ def create_groups_based_on_background(
         )
     logger.info(f"{len(people_with_background)=}")
 
-    # create list of n groups with group_size people in each group
-    groups = []
     # sort people by background skill in ascending order
     people_with_background.sort(key=lambda x: x.backgrounds[background])
 
-    if n_shifts is None or n_shifts >= 1:
-        # do some random shiftings (by 1) to make sure that the groups are not
-        # always the same
-        if n_shifts is None:
-            n_shifts = len(people_with_background) // 4
+    # for each person, select someone with oppositite background and not paired before
+    groups: list[list[Person]] = []
+    while len(people_with_background) > n:
+        person = people_with_background.pop()
+        logger.debug(f"Considering {person.name}...")
+        group = [person]
 
-        indices_to_shift = rng.choice(
-            list(range(len(people_with_background))),
-            size=n_shifts,
-            replace=False,
-        )
-        if max(indices_to_shift) == len(people_with_background) - 1:
-            idx = np.where(indices_to_shift == max(indices_to_shift))[0][0]
-            indices_to_shift[idx] = indices_to_shift[idx] - 1
-
-        for idx in indices_to_shift:
-            people_with_background[idx], people_with_background[idx + 1] = (
-                people_with_background[idx + 1],
-                people_with_background[idx],
+        # get background skill of person
+        person_background_skill = person.backgrounds[background]
+        # get pairs
+        pairs, counts = person.get_pair_count_for_people(people_with_background)
+        counts = np.array(counts)
+        # get background skill of pairs
+        pair_background_skills = [p.backgrounds[background] for p in pairs]
+        if match:
+            # if match, then we want to match people with high skill with low skill
+            skill_diff = np.power(
+                np.array(pair_background_skills) - person_background_skill, 2
             )
+        else:
+            # if not match, then we want to match people with similar skill
+            # (we start selecting from high skill)
+            skill_diff = np.array(pair_background_skills) + person_background_skill
 
-    # split group size to evenly take from start and end of list.
-    # if group_size is odd, take one more from start (lower skill)
-    # so that an expert is more likely to teach 2 novices than 1 novice
-    # learning from 2 experts
-    take_end = n // 2
-    take_start = n - take_end
+        # adjust by pair counts
+        skill_diff = np.clip(skill_diff - max(skill_diff) / 2 * counts**2, 0, None)
 
-    # create groups
-    if match:
-        # get from start and end of list. Group should still be group_size
-        while len(people_with_background) >= n:
-            group = []
-            # if there are not enough people left to fill group, fill with None
-            group.extend(people_with_background[:take_start])
-            group.extend(people_with_background[-take_end:])
-            groups.append(group)
-            people_with_background = people_with_background[take_start:-take_end]
-    else:
-        while len(people_with_background) >= n:
-            group = people_with_background[:n]
-            groups.append(group)
-            people_with_background = people_with_background[n:]
+        # sort by skill diff
+        idx_sort = np.argsort(skill_diff)
+        # reorder
+        skill_diff = skill_diff[idx_sort]
+        pairs = [pairs[i] for i in idx_sort]
+        counts = counts[idx_sort]
+
+        if np.all(skill_diff == 0):
+            # if all skill diff is 0, then set all to 1 for uniform probability
+            skill_diff = np.ones_like(skill_diff)
+
+        # select with weighted probability
+        other_people_in_group = rng.choice(
+            pairs,
+            size=n - 1,
+            replace=False,
+            p=skill_diff / skill_diff.sum(),
+        )
+        # remove from list
+        for idx in other_people_in_group:
+            people_with_background.remove(idx)
+
+        group.extend(other_people_in_group)
+        groups.append(group)
 
     # add any leftovers to the first groups
     # if match:
     #   the leftovers have middle skill and the first groups are expert-novice
     # else:
     #   the leftovers have high skill and the first groups are novice-novice
-    for idx, person in enumerate(people_with_background):
-        groups[idx].append(person)
+    idx = 0
+    while len(people_with_background) > 0:
+        groups[idx].append(people_with_background.pop())
+        idx += 1
 
-    # create seating plan
-    # create a dataframe from the people dict
-    grouping_plan = pd.DataFrame.from_records(groups)
-    # seating_plan.index.name = "Table"
-    # seating_plan.reset_index(inplace=True)
-    # seating_plan.rename(columns={"people": "Name"}, inplace=True)
+    # convert to pure string (p.name); use sub-dict for easier creation of dataframe
+    grouping_plan = pd.DataFrame.from_dict(
+        {
+            f"Group {g}": {"people": [p.name for p in people]}
+            for g, people in enumerate(groups)
+        },
+        orient="index",
+    ).explode("people")
+    grouping_plan.index.name = "Group"
+    grouping_plan.reset_index(inplace=True)
+    grouping_plan.rename(columns={"people": "Name"}, inplace=True)
     if save:
         if not isinstance(save, str):
-            file_name = (
-                f"group-plan-{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
-            )
+            file_name = f"group-plan-{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
             # check if file exists
             if Path(file_name).exists():
                 # file name that includes time
                 file_name = f"group-plan-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
         else:
             file_name = save
-        # export to seating-plan-<date>.csv
+
+        # sort by number
+        parse_skip_n_chars = len("Group ")
+        grouping_plan["number"] = grouping_plan["Group"].apply(
+            lambda x: int(x[parse_skip_n_chars:])
+        )
+        grouping_plan.sort_values(by="number", inplace=True)
+        grouping_plan.drop(columns="number", inplace=True)
+
+        # export to group-plan-<date>.csv
         grouping_plan.to_csv(
             file_name,
             sep=";",

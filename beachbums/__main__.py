@@ -104,12 +104,21 @@ if __name__ == "__main__":
     )
 
     # add verbosity argument group
-    verbosity_options = parser.add_argument_group(title="verbosity options")
+    verbosity_options = parser.add_argument_group(title="debug options")
     verbosity_options.add_argument(
         "-v", "--verbose", help="increase output verbosity", action="store_true"
     )
     verbosity_options.add_argument(
         "-vv", "--very-verbose", help="increase output verbosity", action="store_true"
+    )
+    verbosity_options.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "set the seed used when ordering people."
+            " Default of None keeps things random"
+        ),
     )
     args = parser.parse_args()
 
@@ -160,11 +169,7 @@ if __name__ == "__main__":
 
     past_groups_search_str = args.past_groups
     if args.background and "seating" in past_groups_search_str:
-        logger.warning(
-            "background option not compatible with seating plan files, "
-            "setting --past-pairs to past-pairs-*.csv"
-        )
-        past_groups_search_str = "past-pairs-*.csv"
+        past_groups_search_str = "group-plan-*.csv"
 
     past_groupings_files = Path(".").glob(past_groups_search_str)
     if not past_groupings_files:
@@ -215,8 +220,34 @@ if __name__ == "__main__":
                 match=args.match,
                 save=save,
             )
+            group_column = "Group"
+            group_header = "Group {}: "
+            join_str = " and "
+            next_line = "\n"
         else:
             seating_plan = create_seating_plan(
                 people, persons, tables, save=args.output or args.output is not None
             )
-        print(seating_plan)
+            group_column = "Table"
+            group_header = "# Table {}\n"
+            join_str = "\n"
+            next_line = "\n" + "-" * 80 + "\n"
+
+        seating_plan_text = ""
+
+        parse_skip_n_chars = len(group_column)
+        seating_plan["number"] = seating_plan[group_column].apply(
+            lambda x: int(x[parse_skip_n_chars:])
+        )
+
+        for group_value in sorted(seating_plan["number"].unique()):
+            seating_plan_text += group_header.format(group_value)
+            names = seating_plan[seating_plan["number"] == group_value].Name.values
+            names_str = join_str.join(names)
+            seating_plan_text += names_str + next_line
+
+        if args.output:
+            with open("pairing text.txt", "w") as f:
+                f.write(seating_plan_text)
+
+        print(seating_plan_text)
