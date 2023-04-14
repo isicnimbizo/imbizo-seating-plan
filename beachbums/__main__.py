@@ -13,10 +13,12 @@ import seaborn as sns
 
 from beachbums.data import load_past_groupings, load_people, load_table_layout
 from beachbums.group_plan import create_groups_based_on_background
-from beachbums.persons import (create_adjacency_matrix, create_person_objects,
-                               default_background_cols)
-from beachbums.seating_plan import (create_seating_plan,
-                                    process_previous_pairings)
+from beachbums.persons import (
+    create_adjacency_matrix,
+    create_person_objects,
+    default_background_cols,
+)
+from beachbums.seating_plan import create_seating_plan, process_previous_pairings
 from beachbums.tables import create_random_tables, define_table_layout
 
 logger = logging.getLogger(__name__)
@@ -230,7 +232,7 @@ if __name__ == "__main__":
             group_column = "Table"
             group_header = "# Table {}\n"
             join_str = "\n"
-            next_line = "\n" + "-" * 80 + "\n"
+            next_line = "\n\n" + "-" * 80 + "\n\n"
 
         seating_plan_text = ""
 

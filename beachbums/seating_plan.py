@@ -74,32 +74,33 @@ def create_seating_plan(
     ta_persons = {name: persons[name] for name in random_tas}
 
     students_df = people[people["GROUP"] == "STUDENT"]
-    students_df_preferred_mask = students_df["PREFERRED"].isna()
+    # students_without_pref = students_df["PREFERRED"].isna()
     random_students: list[str] = (
-        students_df[students_df_preferred_mask][name_col]
-        .sample(frac=1, random_state=rng)
-        .tolist()
+        students_df[name_col].sample(frac=1, random_state=rng).tolist()
     )
-    students_with_preferences: list[str] = students_df[students_df_preferred_mask][
-        name_col
-    ].tolist()
-    student_persons = {
-        name: persons[name] for name in students_with_preferences + random_students
-    }
+    # students_with_preferences: list[str] = students_df[~students_without_pref][
+    #     name_col
+    # ].tolist()
+    student_persons = {name: persons[name] for name in random_students}
 
     faculty_s = people[people["GROUP"] == "FACULTY"][name_col]
     random_faculty: list[str] = faculty_s.sample(frac=1, random_state=rng).tolist()
     faculty_persons = {name: persons[name] for name in random_faculty}
 
+    guests_s = people[people["GROUP"] == "GUEST"][name_col]
+    random_guests: list[str] = guests_s.sample(frac=1, random_state=rng).tolist()
+    guest_persons = {name: persons[name] for name in random_guests}
+
     # first, sort tables by size (using value of sub-dict key "capacity") with smallest
     # tables first
     sorted_tables = dict(sorted(tables.items(), key=lambda x: x[1].capacity))
     # then, combine people with TAs first, then FACULTY, then STUDENTS
-    unseated_people = ta_persons | faculty_persons | student_persons
+    unseated_people = ta_persons | faculty_persons | student_persons | guest_persons
 
     # ensure everyone is an option
     for ta, other_person in product(
-        ta_persons.values(), (student_persons | faculty_persons).values()
+        ta_persons.values(),
+        (student_persons | faculty_persons | guest_persons).values(),
     ):
         ta.add_option(other_person)
 
@@ -136,19 +137,53 @@ def create_seating_plan(
         if not added:
             raise ValueError(f"Could not add {ta} to {table_name}")
 
+    people_with_pref_s = people[
+        (~people["PREFERRED"].isna()) & (~(people["GROUP"] == "TA"))
+    ][name_col].tolist()
+    people_with_pref = {name: persons[name] for name in people_with_pref_s}
+
+    # remove people with preferences from faculty_persons, guest_persons, student_persons, extra_tas
+    for group in [
+        faculty_persons,
+        guest_persons,
+        student_persons,
+        extra_tas,
+    ]:
+        for person_name in people_with_pref_s:
+            if person_name in group:
+                group.pop(person_name)
+
     # for each person, get the normalised count of people of people at each table
     # and choose the lowest
-    for group in [faculty_persons, student_persons, extra_tas]:
+    for group in [
+        people_with_pref,
+        faculty_persons,
+        guest_persons,
+        student_persons,
+        extra_tas,
+    ]:
         for person_name, person in group.items():
-            table_vals: dict[str, float] = {}
+            table_weight: dict[str, float] = {}
             for table_name, table in sorted_tables.items():
                 # ignore tables that are full
                 if table.is_full:
                     continue
                 options, counts = person.get_pair_count_for_people(table.people)
                 for option in options:
-                    if option.preferred == person_name:
-                        table_vals[table_name] = 0
+                    if (
+                        option.preferred == person_name
+                        or person.preferred == option.name
+                        or option.preferred == person.preferred
+                    ):
+                        logger.debug(
+                            f"found a preferred match for {person_name} - {option.name}"
+                            f"\n{option.preferred=} - {person.preferred=}"
+                        )
+
+                        table_weight[table_name] = -1
+                        break
+                else:
+                    table_weight[table_name] = 0
                 if person.is_faculty:
                     for i, option in enumerate(options):
                         if option.is_faculty:
@@ -156,16 +191,17 @@ def create_seating_plan(
                                 counts[i] = 100
                             else:
                                 counts[i] *= 100
-                table_vals[table_name] = (table.seated / table.capacity) + (
-                    sum(counts) / len(options)
-                )
+                if table_weight[table_name] >= 0:
+                    table_weight[table_name] = (table.seated / table.capacity) + (
+                        sum(counts) / len(options)
+                    )
             # choose the table with the lowest value and that
-            min_table_name = min(table_vals, key=table_vals.get)  # type: ignore
+            min_table_name = min(table_weight, key=table_weight.get)  # type: ignore
             added = add_person_to_table_func(person, min_table_name)
             if logger.getEffectiveLevel() <= logging.DEBUG:
                 pretty_tables = "\n".join(
                     [
-                        f"{table_vals.get(table_name,-1):.2f}-{table}"
+                        f"{table_weight.get(table_name,-1):.2f}-{table}"
                         for table_name, table in tables.items()
                     ]
                 )
