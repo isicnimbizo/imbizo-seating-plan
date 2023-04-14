@@ -1,23 +1,22 @@
 """
 create seating plan using names from names.csv and output to seating-plan.csv
 """
+from __future__ import annotations
+
 import argparse
 import logging
-from pathlib import Path
 import sys
-from typing import Optional
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from beachbums.data import load_people, load_past_groupings, load_table_layout
+from beachbums.data import load_past_groupings, load_people, load_table_layout
 from beachbums.group_plan import create_groups_based_on_background
-from beachbums.persons import (
-    create_adjacency_matrix,
-    create_person_objects,
-    default_background_cols,
-)
-from beachbums.seating_plan import create_seating_plan, process_previous_pairings
+from beachbums.persons import (create_adjacency_matrix, create_person_objects,
+                               default_background_cols)
+from beachbums.seating_plan import (create_seating_plan,
+                                    process_previous_pairings)
 from beachbums.tables import create_random_tables, define_table_layout
 
 logger = logging.getLogger(__name__)
