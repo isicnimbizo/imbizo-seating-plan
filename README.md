@@ -18,4 +18,4 @@ python -m beachbums --help
 
 ## TODO
 
-- [ ] Implement preferred seating
+- [X] Implement preferred seating
