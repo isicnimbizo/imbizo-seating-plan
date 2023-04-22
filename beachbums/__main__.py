@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from multiprocessing import Pool
 import sys
 from pathlib import Path
 
@@ -182,7 +183,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     logger.info("loading previous groups")
-    past_groupings = [load_past_groupings(fname) for fname in past_groupings_files]
+    with Pool() as pool:
+        past_groupings = pool.map(load_past_groupings, past_groupings_files)
+    # past_groupings = [load_past_groupings(fname) for fname in past_groupings_files]
 
     try:
         people = load_people(args.names)

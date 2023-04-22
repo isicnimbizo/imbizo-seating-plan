@@ -10,7 +10,7 @@
       "request": "launch",
       "module": "beachbums",
       "justMyCode": true,
-      "args": ["-vv", "-o", ""],
+      "args": ["-vv",],
       "env": {
         "PYTHONPATH": "${workspaceRoot}"
       }
@@ -21,7 +21,7 @@
       "request": "launch",
       "module": "beachbums",
       "justMyCode": true,
-      "args": ["--background", "Programming", "-vv", "-o", ""],
+      "args": ["--background", "Programming", "-vv"],
       "env": {
         "PYTHONPATH": "${workspaceRoot}"
       }
