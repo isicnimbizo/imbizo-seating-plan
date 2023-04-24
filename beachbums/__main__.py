@@ -211,7 +211,37 @@ if __name__ == "__main__":
         adjacency_matrix.to_csv("report.csv")
         with sns.plotting_context("paper", font_scale=0.5):  # type: ignore
             fig, ax = plt.subplots(figsize=(6, 6), dpi=200)
-            sns.heatmap(adjacency_matrix, ax=ax, square=True)
+            # plot the 0 values as off-white
+            # sns.heatmap(
+            #     adjacency_matrix,
+            #     ax=ax,
+            #     square=True,
+            #     mask=adjacency_matrix != 0,
+            #     linewidths=0,
+            #     cmap="Greys",
+            #     # annot=True,
+            #     cbar=False,
+            # )
+
+            # create a logaritmic scale for the heatmap
+            cmap = sns.cubehelix_palette(
+                start=0.5,
+                rot=-0.75,
+                as_cmap=True,
+            )
+
+            sns.heatmap(
+                adjacency_matrix,
+                ax=ax,
+                square=True,
+                mask=adjacency_matrix == 0,
+                linewidths=0.1,
+                cmap=cmap,
+                # annot=True,
+            )
+            # grey with an alpha
+            grey_alpha = (0.5, 0.5, 0.5, 0.1)
+            ax.set_facecolor(grey_alpha)
             fig.savefig("report.png")
     else:
         save = args.output
