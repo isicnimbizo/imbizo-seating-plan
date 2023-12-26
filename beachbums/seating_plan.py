@@ -5,7 +5,7 @@ import logging
 from functools import partial
 from itertools import product
 from pathlib import Path
-from typing import Callable, Union
+from typing import Callable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -51,112 +51,155 @@ def create_seating_plan(
     people: pd.DataFrame,
     persons: dict[str, Person],
     tables: dict[str, Table],
-    name_col="NAME",
-    save=True,
-    seed=None,
+    name_col: str = "NAME",
+    save: bool = True,
+    seed: Optional[int] = None,
 ):
     """
-    randomize seating based on TAs being at each table and evenly seat people at
-    each table
+    Create a seating plan based on the given data.
 
-    :param people: dataframe containing GROUP (TA, STUDENT, or FACULTY) and people's names
-    :param tables: dict of dict with table name: {size, people}
+    Args:
+        people (pd.DataFrame): The data frame containing information about the people.
+        persons (dict[str, Person]): A dictionary of person objects. Objects will be modified.
+        tables (dict[str, Table]): A dictionary of table objects. Objects will be modified.
+        name_col (str, optional): The column name in the `people` data frame that contains the names. Defaults to "NAME".
+        save (bool, optional): Whether to save the seating plan to a file. Defaults to True.
+        seed (int, optional): The random seed for reproducibility. Defaults to None.
+
+    Returns:
+        pd.DataFrame: The seating plan as a data frame.
+
+    Raises:
+        ValueError: If there are not enough seats for all people.
+        ValueError: If a person is already seated.
+        ValueError: If a person cannot be added to any table.
+        ValueError: If a table is full.
+        ValueError: If a person could not be seated after trying all tables.
+        ValueError: If there are tables with more than one faculty and tables with no faculty.
+
+    Algorithm:
+        1. Filter out excluded people based on the "EXCLUDE" column in the `people` data frame.
+        2. Randomise Teaching Assistants (TAs) and create a dictionary of TA objects.
+        3. Randomise students and create a dictionary of student objects.
+        4. Randomise faculty members and create a dictionary of faculty objects.
+        5. Randomise guests and create a dictionary of guest objects.
+        6. Sort the tables by size in ascending order (smallest first).
+        7. Combine all unseated people (TAs, faculty, students, and guests) into one dictionary.
+        8. Add options for each TA to sit with other unseated people.
+        9. Create a dictionary to keep track of where each person is sitting.
+        10. Create a partial function to add a person to a table.
+        11. Calculate the total number of seats and check if there are enough seats for all people.
+        12. If there are extra TAs, remove them from the dictionary of TAs.
+        13. Seat the TAs at the tables.
+        14. Remove people with preferences from the dictionaries of faculty, guests, students, and extra TAs.
+        15. For each person (preferences first), calculate the weight for each table based on their preferences and the current seating arrangement.
+        16. Choose the table with the lowest weight for each person and add them to the table.
+        17. If a person cannot be added to any table, raise an error.
+        18. Assign the remaining unseated people to tables in a round-robin fashion.
+        19. Check if each table has at least one faculty member and no more than one faculty member.
+        20. Convert the seating plan to a data frame and save it to a file if specified.
+
     """
     logger.info("Creating seating plan")
-    rng = np.random.default_rng(seed) if seed else None
-    # filter people based on EXCLUDE column
-    excluded_rows = people[(people["EXCLUDE"] == "X") | (people["EXCLUDE"] == "Y")]
-    excluded_names: list[str] = list(excluded_rows[name_col].values)
+    rng = np.random.default_rng(seed)
+    # 1. filter people based on EXCLUDE column
+    # excluded_rows = people[(people["EXCLUDE"] == "X") | (people["EXCLUDE"] == "Y")]
+    # excluded_names: list[str] = list(excluded_rows[name_col].values)
+    excluded_names = {p.name for p in persons.values() if p.exclude}
     people = people[~people["NAME"].isin(excluded_names)]
 
-    tas_s = people[people["GROUP"] == "TA"][name_col]
-    random_tas: list[str] = tas_s.sample(frac=1, random_state=rng).tolist()
-    ta_persons = {name: persons[name] for name in random_tas}
+    # 2 - 5. randomise groups
+    def _randomize_group(group: str) -> dict[str, Person]:
+        """Randomise a group of people and return a dictionary of Person objects
 
-    students_df = people[people["GROUP"] == "STUDENT"]
-    # students_without_pref = students_df["PREFERRED"].isna()
-    random_students: list[str] = (
-        students_df[name_col].sample(frac=1, random_state=rng).tolist()
-    )
-    # students_with_preferences: list[str] = students_df[~students_without_pref][
-    #     name_col
-    # ].tolist()
-    student_persons = {name: persons[name] for name in random_students}
+        Note that this inner function uses nonlocal variables 'people', 'persons', 'name_col' and  'rng'
+        """
+        group_s = people[people["GROUP"] == group][name_col]
+        random_group: list[str] = group_s.sample(frac=1, random_state=rng).tolist()
+        group_persons = [persons[name] for name in random_group]
+        group_persons = sorted(
+            group_persons, key=lambda x: len(x.preferred), reverse=True
+        )
+        return {p.name: p for p in group_persons}
 
-    faculty_s = people[people["GROUP"] == "FACULTY"][name_col]
-    random_faculty: list[str] = faculty_s.sample(frac=1, random_state=rng).tolist()
-    faculty_persons = {name: persons[name] for name in random_faculty}
+    ta_persons = _randomize_group("TA")
+    student_persons = _randomize_group("STUDENT")
+    faculty_persons = _randomize_group("FACULTY")
+    guest_persons = _randomize_group("GUEST")
 
-    guests_s = people[people["GROUP"] == "GUEST"][name_col]
-    random_guests: list[str] = guests_s.sample(frac=1, random_state=rng).tolist()
-    guest_persons = {name: persons[name] for name in random_guests}
-
-    # first, sort tables by size (using value of sub-dict key "capacity") with smallest
-    # tables first
+    # 6. sort tables by size (using value of sub-dict key "capacity") with smallest tables first
     sorted_tables = dict(sorted(tables.items(), key=lambda x: x[1].capacity))
-    # then, combine people with TAs first, then FACULTY, then STUDENTS
+    # 7. combine people with TAs first, then FACULTY, then STUDENTS
     unseated_people = ta_persons | faculty_persons | student_persons | guest_persons
 
-    # ensure everyone is an option
-    for ta, other_person in product(
-        ta_persons.values(),
-        (student_persons | faculty_persons | guest_persons).values(),
-    ):
-        ta.add_option(other_person)
+    # 8. ensure everyone is an option
+    # for ta, other_person in product(
+    #     ta_persons.values(),
+    #     (student_persons | faculty_persons | guest_persons).values(),
+    # ):
+    #     ta.add_option(other_person)
 
-    # keep track of where a person is sitting
+    # 9. keep track of where a person is sitting
     people_table_placement: dict[str, Union[int, Table]] = {
         person_name: -1 for person_name in unseated_people.keys()
     }
 
-    # create a partial function to add a person to a table, taking in the people dict and
+    # 10. create a partial function to add a person to a table, taking in the people dict and
     # table dict
     add_person_to_table_func = add_person_to_table_factory(
         people_table_placement, tables
     )
 
-    # count size of tables
+    # 11. count size of tables
     total_seats = sum([table.capacity for table in sorted_tables.values()])
     if total_seats < len(unseated_people):
         raise ValueError(
             f"Not enough seats for all people! {total_seats} < {len(unseated_people)}"
         )
+
     extra_seats = total_seats - len(unseated_people)
+    logger.info(f"Total seats: {total_seats}. Extra seats: {extra_seats}")
+
+    # 12. if there are extra TAs, remove ('pop') them from the dictionary of TAs
+    # TAs with preferences will be at the beginning of the ta list and extras are selected from the end
     extra_tas = {}
     if len(ta_persons) > (num_sorted_tables := len(sorted_tables)):
         extra_tas = {
-            name: ta_persons.pop(name)
-            for name in list(ta_persons.keys())[num_sorted_tables:]
+            ta_name: ta_persons.pop(ta_name)
+            for ta_name in list(ta_persons.keys())[num_sorted_tables:]
         }
 
-    # seat TAs
+    # 13. seat TAs
     for (table_name, table), (ta_name, ta) in zip(
         sorted_tables.items(), ta_persons.items()
     ):
         added = add_person_to_table_func(ta, table_name)
+        unseated_people.pop(ta_name)
         if not added:
             raise ValueError(f"Could not add {ta} to {table_name}")
 
-    people_with_pref_s = people[
-        (~people["PREFERRED"].isna()) & (~(people["GROUP"] == "TA"))
-    ][name_col].tolist()
-    people_with_pref = {name: persons[name] for name in people_with_pref_s}
+    # 14. put people with preferences in their own 'group' dict for seating next at tables
+    persons_w_pref_or_as_pref: dict[str, Person] = {}
 
-    # remove people with preferences from faculty_persons, guest_persons, student_persons, extra_tas
-    for group in [
-        faculty_persons,
-        guest_persons,
-        student_persons,
-        extra_tas,
-    ]:
-        for person_name in people_with_pref_s:
-            if person_name in group:
-                group.pop(person_name)
+    # 14.1 add preferences as mutual
+    for p in persons.values():
+        if len(p.preferred):
+            for person_name in p.preferred:
+                persons[person_name].preferred.add(p.name)
 
-    # for each person, get the normalised count of people of people at each table
+    # 14.2 add people with preferences to the dict
+    for p in unseated_people.values():
+        if len(p.preferred):
+            persons_w_pref_or_as_pref[p.name] = p
+            for group in [faculty_persons, guest_persons, student_persons, extra_tas]:
+                # remove from their usual group to prevent double counting
+                if p.name in group:
+                    group.pop(p.name)
+
+    # 15. for each person, get the normalised count of people at each table
     # and choose the lowest
     for group in [
-        people_with_pref,
+        persons_w_pref_or_as_pref,
         faculty_persons,
         guest_persons,
         student_persons,
@@ -171,9 +214,9 @@ def create_seating_plan(
                 options, counts = person.get_pair_count_for_people(table.people)
                 for option in options:
                     if (
-                        option.preferred == person_name
-                        or person.preferred == option.name
-                        or option.preferred == person.preferred
+                        person_name in option.preferred
+                        or option.name in person.preferred
+                        or person.preferred in option.preferred
                     ):
                         logger.debug(
                             f"found a preferred match for {person_name} - {option.name}"
@@ -300,6 +343,16 @@ def create_seating_plan(
 def add_person_to_table_factory(
     people_table_placement: dict[str, int | Table], table_options: dict[str, Table]
 ) -> Callable[[Person, str], bool]:
+    """
+    Generates a function that adds a person to a table based on the provided `people_table_placement` and `table_options`.
+
+    Args:
+        people_table_placement (dict[str, int | Table]): A dictionary that maps table names to either an integer or a Table object. The integer represents the number of available seats at the table.
+        table_options (dict[str, Table]): A dictionary that maps table names to Table objects. Each Table object contains additional information about the table.
+
+    Returns:
+        Callable[[Person, str], bool]: A callable function that takes a Person object and a table name as parameters, and returns a boolean value indicating whether the person was successfully added to the table.
+    """
     return partial(_add_person_to_table_generic, people_table_placement, table_options)
 
 
@@ -311,6 +364,15 @@ def _add_person_to_table_generic(
 ) -> bool:
     """
     Add a person to a table.
+
+    Args:
+        people_table_placement (dict[str, int | Table]): A dictionary mapping person names to table indices or Table objects.
+        table_options (dict[str, Table]): A dictionary mapping table names to Table objects.
+        person (Person): The person to be added to the table.
+        table_name (str): The name of the table to which the person should be added.
+
+    Returns:
+        bool: True if the person was successfully added to the table, False otherwise.
     """
     if (
         table_options[table_name].has_space
@@ -320,77 +382,3 @@ def _add_person_to_table_generic(
         people_table_placement[person.name] = table_options[table_name]
         return True
     return False
-
-
-def ta_centric_algorithm(
-    excluded_persons,
-    faculty_persons,
-    ta_persons,
-    sorted_tables,
-    people_table_placement,
-    extra_seats,
-    extra_tas,
-    rng,
-):
-    """
-    Algorithm 2: seat TAs and select students based on frequency of sitting with the TA
-    """
-    add_person_to_table_func = add_person_to_table_factory(
-        people_table_placement, sorted_tables
-    )
-
-    # first, seat TAs
-    all_excluded = set(excluded_persons + faculty_persons + ta_persons)
-    # assign tas to table and choose people they haven't sat with yet
-    for (table_name, table), ta in zip(sorted_tables.items(), ta_persons):
-        # add TA
-        added = add_person_to_table_func(ta, table_name)
-        if not added:
-            raise ValueError(f"Could not add {ta} to {table_name}")
-        # get previous pairs
-        options, counts = ta.get_pair_count_for_everyone_except(all_excluded)
-        # add 1 to denominator so that inverse is 1 not 0
-        adjusted_counts = np.array(counts) + 1
-        # power to make it even less likely to sit with the same person
-        p = 1 / adjusted_counts**4
-        # assign a probability of 0 to people already at tables
-        for i, option in enumerate(options):
-            if people_table_placement[option.name] != -1:
-                p[i] = 0
-        # make sure p sums to 1
-        p = p / p.sum()
-
-        # people to seat.
-        # if there are extra seats, don't fill up the tables initially. This would mean
-        # the last table could be empty.
-        size = (
-            table.capacity
-            - table.seated
-            - int(
-                np.ceil(
-                    (extra_seats + len(faculty_persons) + len(extra_tas))
-                    / len(sorted_tables),
-                )
-            )
-        )
-        # make sure
-        if size > np.sum(p > 0):
-            size = np.sum(p > 0)
-        # choose some people
-        choices = rng.choice(
-            options,
-            size=size,
-            replace=False,
-            p=p,
-        )
-        # add them to the table
-        for choice in choices:
-            added = add_person_to_table_func(choice, table_name)
-            if not added:
-                raise ValueError(f"Could not add {choice} to {table_name}")
-
-    # remove assigned people from list of people to seat
-    unseated_people = [
-        person for person in unseated_people if people_table_placement[person] == -1
-    ]
-    unseated_persons = [persons[person] for person in unseated_people]

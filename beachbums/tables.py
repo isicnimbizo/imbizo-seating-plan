@@ -82,11 +82,11 @@ def create_random_tables(
     num_tables=6, min_total_size=40, min_max_variation=2
 ) -> dict[str, Table]:
     """
-    Create a dict of dicts of random tables
+    Create a dict of random tables
     """
     tables = {}
     min_size = min_total_size // num_tables + 1
-    max_size = min_size + min_max_variation
+    max_size = min_size + max(1, min_max_variation)  # +1 to avoid min_size == max_size
     for i in range(1, num_tables + 1):
         name = f"table {i}"
         tables[name] = Table(name, np.random.randint(min_size, max_size))

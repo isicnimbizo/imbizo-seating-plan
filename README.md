@@ -16,6 +16,9 @@ See the help
 python -m beachbums --help
 ```
 
-## TODO
+## To Do
 
+- [ ] Create GUI
+- [ ] Add extra seating rules (Gender, Country, etc)
+- [X] Group for tutorials
 - [X] Implement preferred seating

@@ -1,7 +1,9 @@
 from __future__ import annotations
+from collections import defaultdict
 
 import copy
 import logging
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -49,7 +51,7 @@ def create_adjacency_matrix(persons: dict[str, "Person"]):
         data=np.zeros((len(persons), len(persons))),
     )
     for p_name, person in persons.items():
-        for other_person, count in person.pairs.items():
+        for other_person, count in person.pair_counts.items():
             adjacency_matrix.loc[person.name, other_person.name] = count
     return adjacency_matrix
 
@@ -61,15 +63,17 @@ class Person:
         Attributes:
             name (str): the person's name
             group (str): the person's group (TA, STUDENT, or FACULTY)
-            backgrounds (dict): the person's backgrounds (optional)
-            exclude (bool): whether the person is excluded from the beachbums
-            pairs (dict): a dict of dicts where the key is the person's name and the value is a dict of the number of times they've sat with someone
+            backgrounds (dict): the person's backgrounds (optional) (e.g. "Math": 10, "Physics": 9, "Neuro": 5)
+            preferred (set): the person's preferred people to sit with (optional)
+            exclude (bool): whether to exclude the person from the beachbums algorithms
+            pair_counts (dict): a dict where the key is the person's name and the value the number of times they've sat with someone
+            props (dict): a dict of rest of the person's attributes
 
         Methods:
             add_pair(other_person, reciprocate=True): add a count of 1 to the pair count for this person and the other person
             add_persons(other_persons): add a count of 1 to the pair count for this person and the other persons
             get_pairs(): return the list of people with whom this person has sat
-            get_total_pair_count(): return the total number of times this person has sat with someone
+            get_total_pair_count(): return the total number of times this person has sat with others
             get_pair_count_for_person(other_person): return the number of times this person has sat with the other person
             get_pair_count_for_people(other_people): return the number of times this person has sat with all of the other people
             get_pair_count_for_people_except(other_people): return the number of times this person has sat with all of the other people except the other people
@@ -89,9 +93,9 @@ class Person:
         {
             "NAME": "John",
             "GROUP": "STUDENT",
-            "Maths": 10,
+            "Math": 10,
             "Physics": 9,
-            "Neuroscience": 5,
+            "Neuro": 5,
             "EXCLUDE": False
         }
 
@@ -103,22 +107,29 @@ class Person:
 
         """
         record = copy.deepcopy(record)
-        self.name = record.pop(name_col)
-        self.group = record.pop(group_col, None)
+        self.name: str = record.pop(name_col)
+        self.group: Optional[str] = record.pop(group_col, None)
         # add background values if they exist (non-nan when converted to float)
-        self.backgrounds = {
+        self.backgrounds: dict[str, int | float] = {
             col: value
             for col in background_cols
             if col in record and not np.isnan(value := float(record.pop(col)))
         }
-        self.preferred = record.pop("PREFERRED", None)
-        self.exclude = record.pop("EXCLUDE", False)
+
+        pref_str = str(record.pop("PREFERRED", "")).replace("nan", "").strip()
+        self.preferred: set[str] = (
+            {pr.strip() for pr in pref_str.split(",")} if pref_str else set()
+        )
+
+        exclude_str = str(record.pop("EXCLUDE", "")).replace("nan", "").strip().upper()
+        self.exclude = len(exclude_str) > 0 and exclude_str not in {"N", "FALSE"}
+
         self._unique_name = f"{self.name}_{hash(self.name)}"
         # leave the rest of the record dict as is
         self.props = record
 
         # initialize the pair count dict
-        self.pairs: dict[Person, int] = {}
+        self.pair_counts: dict[Person, int] = defaultdict(int)
 
     def __repr__(self) -> str:
         return self.name
@@ -171,34 +182,28 @@ class Person:
         """
         if self == other_person:
             return
-        if other_person not in self.pairs:
-            self.pairs[other_person] = 1
-        else:
-            self.pairs[other_person] += 1
+
+        self.pair_counts[other_person] += 1
 
         if reciprocate:
             # prevent infinite recursion
             other_person.add_pair(self, reciprocate=False)
 
-    def add_option(self, other_person: "Person"):
-        """Add the other person as an option for pairs (default pair count of 0)"""
-        if self == other_person:
-            return
-        self.pairs.setdefault(other_person, 0)
-
     @property
     def pretty_pairs(self):
         """return pairs as strings instead of Person objects"""
-        return {other_person.name: count for other_person, count in self.pairs.items()}
+        return {
+            other_person.name: count for other_person, count in self.pair_counts.items()
+        }
 
     def get_pairs(self):
-        return self.pairs.keys()
+        return self.pair_counts.keys()
 
     def get_total_pair_count(self):
-        return sum(self.pairs.values())
+        return sum(self.pair_counts.values())
 
     def get_pair_count_for_person(self, other_person: "Person"):
-        return self.pairs[other_person] if other_person in self.pairs else 0
+        return self.pair_counts[other_person]
 
     def get_pair_count_for_people(self, other_people: set["Person"] | list["Person"]):
         pairs = {

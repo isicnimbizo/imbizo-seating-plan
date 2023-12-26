@@ -12,16 +12,14 @@ from beachbums.persons import Person
 
 logger = logging.getLogger(__name__)
 
-rng = np.random.default_rng()
-
 
 def create_groups_based_on_background(
     persons: dict[str, Person],
     background: str,
-    n: int,
+    group_size: int,
     match: bool = True,
-    n_shifts: Optional[int] = None,
     save: Optional[Path | str] = None,
+    seed: Optional[int] = None,
 ):
     """Create groups (size n) of people based on background skill.
 
@@ -36,10 +34,6 @@ def create_groups_based_on_background(
     match : bool, optional
         Match people based on inverse background skill. People with high skill on the
         background are likely to be paired with low skill. False is similar skill.
-    n_shifts : int, optional
-        Number of random shifts to make to the groups, by default num people / 4.
-        This is to make sure that the groups are not always the same.
-        Must be smaller than number of people.
     save : Optional[Union[Path, str]], optional
         Save seating plan to file, by default None
 
@@ -50,6 +44,8 @@ def create_groups_based_on_background(
     """
 
     logger.info("creating groups based on background")
+    rng = np.random.default_rng(seed)
+
     # get list of people with background skill
     people_with_background = [
         p for p in persons.values() if background in p.backgrounds
@@ -65,7 +61,7 @@ def create_groups_based_on_background(
 
     # for each person, select someone with oppositite background and not paired before
     groups: list[list[Person]] = []
-    while len(people_with_background) > n:
+    while len(people_with_background) >= group_size:
         person = people_with_background.pop()
         logger.debug(f"Considering {person.name}...")
         group = [person]
@@ -104,7 +100,7 @@ def create_groups_based_on_background(
         # select with weighted probability
         other_people_in_group = rng.choice(
             pairs,
-            size=n - 1,
+            size=group_size - 1,
             replace=False,
             p=skill_diff / skill_diff.sum(),
         )
@@ -115,6 +111,12 @@ def create_groups_based_on_background(
         group.extend(other_people_in_group)
         groups.append(group)
 
+    if len(people_with_background) > len(groups):
+        raise ValueError(
+            f"Number of people with background ({len(people_with_background)}) "
+            f"is larger than number of groups ({len(groups)}). "
+            f"Decrease group size or increase number of people."
+        )
     # add any leftovers to the first groups
     # if match:
     #   the leftovers have middle skill and the first groups are expert-novice
